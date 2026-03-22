@@ -1,0 +1,408 @@
+#include <stdio.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#include <strings.h>
+#include <string.h>
+/* This file is in the public domain. */
+
+#define NEED_EXTERN
+#include "instrtbl.h"
+
+#include "pdp11.h"
+#include "disas.h"
+#include "deftbl.h"
+
+static int adjust_adjacent(int dtx, INSTR_OPS opfwant)
+{
+ int dtx2;
+
+ for (dtx2=dtx;(dtx2>=0)&&(instr_defs[dtx2].value==instr_defs[dtx].value);dtx2--) if (instr_defs[dtx2].ops_format == opfwant) return(dtx2);
+ for (dtx2=dtx;(dtx2<instr_def_n)&&(instr_defs[dtx2].value==instr_defs[dtx].value);dtx2++) if (instr_defs[dtx2].ops_format == opfwant) return(dtx2);
+ bugchk("adjust_adjacent can't find it");
+}
+
+static int disas_r(int rno)
+{
+ static const char *rnames[] = { "r0", "r1", "r2", "r3", "r4", "r5", "sp", "pc" };
+
+ put_s(rnames[rno&7]);
+ return(strlen(rnames[rno&7]));
+}
+
+static int disas_g(int op, word *pcp)
+{
+ int n;
+
+ n = 0;
+ switch (op & 070)
+  { case 000:
+       n += disas_r(op);
+       break;
+    case 010:
+       put('(');
+       n ++;
+       n += disas_r(op);
+       put(')');
+       n ++;
+       break;
+    case 020:
+       if ((op & 7) == 7)
+	{ put('#');
+	  n ++;
+	  put_6(fetchword(*pcp,MMAN_ISPACE));
+	  n += 6;
+	  *pcp = (*pcp + 2) & 0xffff;
+	}
+       else
+	{ put('(');
+	  n ++;
+	  n += disas_r(op);
+	  put_s(")+");
+	  n += 2;
+	}
+       break;
+    case 030:
+       if ((op & 7) == 7)
+	{ put_s("@#");
+	  n += 2;
+	  put_6(fetchword(*pcp,MMAN_ISPACE));
+	  n += 6;
+	  *pcp = (*pcp + 2) & 0xffff;
+	}
+       else
+	{ put_s("@(");
+	  n += 2;
+	  n += disas_r(op);
+	  put_s(")+");
+	  n += 2;
+	}
+       break;
+    case 040:
+       put_s("-(");
+       n += 2;
+       n += disas_r(op);
+       put(')');
+       n ++;
+       break;
+    case 050:
+       put_s("@-(");
+       n += 3;
+       n += disas_r(op);
+       put(')');
+       n ++;
+       break;
+    case 060:
+       if ((op & 7) == 7)
+	{ put_6(fetchword(*pcp,MMAN_ISPACE)+2+*pcp);
+	  n += 6;
+	  *pcp = (*pcp + 2) & 0xffff;
+	}
+       else
+	{ put_6(fetchword(*pcp,MMAN_ISPACE));
+	  n += 6;
+	  *pcp = (*pcp + 2) & 0xffff;
+	  put('(');
+	  n ++;
+	  n += disas_r(op);
+	  put(')');
+	  n ++;
+	}
+       break;
+    case 070:
+       if ((op & 7) == 7)
+	{ put('@');
+	  n ++;
+	  put_6(fetchword(*pcp,MMAN_ISPACE)+2+*pcp);
+	  n += 6;
+	  *pcp = (*pcp + 2) & 0xffff;
+	}
+       else
+	{ put('@');
+	  n ++;
+	  put_6(fetchword(*pcp,MMAN_ISPACE));
+	  n += 6;
+	  *pcp = (*pcp + 2) & 0xffff;
+	  put('(');
+	  n ++;
+	  n += disas_r(op);
+	  put(')');
+	  n ++;
+	}
+       break;
+  }
+ return(n);
+}
+
+static int disas_fr(int rno)
+{
+ static const char *rnames[] = { "f0", "f1", "f2", "f3", "f4", "f5", "?f6?", "?f7?" };
+
+ put_s(rnames[rno&7]);
+ return(strlen(rnames[rno&7]));
+}
+
+static int disas_f(int op, word *pcp)
+{
+ int n;
+
+ n = 0;
+ switch (op & 070)
+  { case 000:
+       n += disas_fr(op);
+       break;
+    case 010:
+       put('(');
+       n ++;
+       n += disas_r(op);
+       put(')');
+       n ++;
+       break;
+    case 020:
+       if ((op & 7) == 7)
+	{ put_s("#0x");
+	  n += 3;
+	  if (fps & FPS_FD)
+	   { unsigned long int fl;
+	     unsigned long int fh;
+	     fl = 0xffff && (unsigned long int) fetchword(*pcp,MMAN_ISPACE);
+	     *pcp = (*pcp + 2) & 0xffff;
+	     fl |= (0xffff && (unsigned long int) fetchword(*pcp,MMAN_ISPACE)) << 16;
+	     *pcp = (*pcp + 2) & 0xffff;
+	     fh = 0xffff && (unsigned long int) fetchword(*pcp,MMAN_ISPACE);
+	     *pcp = (*pcp + 2) & 0xffff;
+	     fh |= (0xffff && (unsigned long int) fetchword(*pcp,MMAN_ISPACE)) << 16;
+	     *pcp = (*pcp + 2) & 0xffff;
+	     put_x8(fh);
+	     put_x8(fl);
+	     n += 16;
+	   }
+	  else
+	   { unsigned long int f;
+	     f = 0xffff && (unsigned long int) fetchword(*pcp,MMAN_ISPACE);
+	     *pcp = (*pcp + 2) & 0xffff;
+	     f |= (0xffff && (unsigned long int) fetchword(*pcp,MMAN_ISPACE)) << 16;
+	     *pcp = (*pcp + 2) & 0xffff;
+	     put_x8(f);
+	     n += 8;
+	   }
+	}
+       else
+	{ put('(');
+	  n ++;
+	  n += disas_r(op);
+	  put_s(")+");
+	  n += 2;
+	}
+       break;
+    case 030:
+       if ((op & 7) == 7)
+	{ put_s("@#");
+	  n += 2;
+	  put_6(fetchword(*pcp,MMAN_ISPACE));
+	  n += 6;
+	  *pcp = (*pcp + 2) & 0xffff;
+	}
+       else
+	{ put_s("@(");
+	  n += 2;
+	  n += disas_r(op);
+	  put_s(")+");
+	  n += 2;
+	}
+       break;
+    case 040:
+       put_s("-(");
+       n += 2;
+       n += disas_r(op);
+       put(')');
+       n ++;
+       break;
+    case 050:
+       put_s("@-(");
+       n += 3;
+       n += disas_r(op);
+       put(')');
+       n ++;
+       break;
+    case 060:
+       if ((op & 7) == 7)
+	{ put_6(fetchword(*pcp,MMAN_ISPACE)+2+*pcp);
+	  n += 6;
+	  *pcp = (*pcp + 2) & 0xffff;
+	}
+       else
+	{ put_6(fetchword(*pcp,MMAN_ISPACE));
+	  n += 6;
+	  *pcp = (*pcp + 2) & 0xffff;
+	  put('(');
+	  n ++;
+	  n += disas_r(op);
+	  put(')');
+	  n ++;
+	}
+       break;
+    case 070:
+       if ((op & 7) == 7)
+	{ put('@');
+	  n ++;
+	  put_6(fetchword(*pcp,MMAN_ISPACE)+2+*pcp);
+	  n += 6;
+	  *pcp = (*pcp + 2) & 0xffff;
+	}
+       else
+	{ put('@');
+	  n ++;
+	  put_6(fetchword(*pcp,MMAN_ISPACE));
+	  n += 6;
+	  *pcp = (*pcp + 2) & 0xffff;
+	  put('(');
+	  n ++;
+	  n += disas_r(op);
+	  put(')');
+	  n ++;
+	}
+       break;
+  }
+ return(n);
+}
+
+int disas(word addr)
+{
+ word inst;
+ int dtx;
+ int i;
+ word pctemp;
+ word a;
+ int nw;
+
+ put_6(addr);
+ put_s(": ");
+ inst = fetchword(addr,MMAN_ISPACE);
+ dtx = get_deftbl(inst);
+ pctemp = (addr + 2) & 0xffff;
+ if (dtx == DEF_UNUSED)
+  { put_s(".word   ");
+    put_6(inst);
+  }
+ else
+  { switch (instr_defs[dtx].ops_format)
+     { case OPS_F0:
+	  if (fps & FPS_FD) dtx = adjust_adjacent(dtx,OPS_D0);
+	  break;
+       case OPS_FA6_F0:
+	  if (fps & FPS_FD) dtx = adjust_adjacent(dtx,OPS_FA6_D0);
+	  break;
+       case OPS_F0_FA6:
+	  if (fps & FPS_FD) dtx = adjust_adjacent(dtx,OPS_D0_FA6);
+	  break;
+       case OPS_D0:
+	  if (! (fps & FPS_FD)) dtx = adjust_adjacent(dtx,OPS_F0);
+	  break;
+       case OPS_FA6_D0:
+	  if (! (fps & FPS_FD)) dtx = adjust_adjacent(dtx,OPS_FA6_F0);
+	  break;
+       case OPS_D0_FA6:
+	  if (! (fps & FPS_FD)) dtx = adjust_adjacent(dtx,OPS_F0_FA6);
+	  break;
+       default:
+	  break;
+     }
+    put_s(instr_defs[dtx].name);
+    for (i=strlen(instr_defs[dtx].name);i<8;i++) put(' ');
+    nw = 0;
+    switch (instr_defs[dtx].ops_format)
+     { case OPS_NONE:
+	  break;
+       case OPS_G0:
+	  nw += disas_g(inst,&pctemp);
+	  break;
+       case OPS_R0:
+	  nw += disas_r(inst);
+	  break;
+       case OPS_O30:
+	  put('0'+(inst&7));
+	  nw ++;
+	  break;
+       case OPS_B80:
+	  put_6(pctemp+((inst&0xff)<<1)+((inst&0x80)?0xfe00:0));
+	  nw += 6;
+	  break;
+       case OPS_R6_G0:
+	  nw += disas_r(inst>>6);
+	  put(',');
+	  nw ++;
+	  nw += disas_g(inst,&pctemp);
+	  break;
+       case OPS_G0_R6:
+	  nw += disas_g(inst,&pctemp);
+	  put(',');
+	  nw ++;
+	  nw += disas_r(inst>>6);
+	  break;
+       case OPS_G6_G0:
+	  nw += disas_g(inst>>6,&pctemp);
+	  put(',');
+	  nw ++;
+	  nw += disas_g(inst,&pctemp);
+	  break;
+       case OPS_R6_B60:
+	  nw += disas_r(inst>>6);
+	  put(',');
+	  nw ++;
+	  put_6(pctemp-((inst&077)<<1));
+	  nw += 6;
+	  break;
+       case OPS_O80:
+	  put_3(inst);
+	  nw += 3;
+	  break;
+       case OPS_O60:
+	  put_2(inst);
+	  nw += 2;
+	  break;
+       case OPS_F0:
+       case OPS_D0:
+	  nw += disas_f(inst,&pctemp);
+	  break;
+       case OPS_FA6_F0:
+       case OPS_FA6_D0:
+	  nw += disas_fr((inst>>6)&3);
+	  put(',');
+	  nw ++;
+	  nw += disas_f(inst,&pctemp);
+	  break;
+       case OPS_F0_FA6:
+       case OPS_D0_FA6:
+	  nw += disas_f(inst,&pctemp);
+	  put(',');
+	  nw ++;
+	  nw += disas_fr((inst>>6)&3);
+	  break;
+       case OPS_FA6_G0:
+	  nw += disas_fr((inst>>6)&3);
+	  put(',');
+	  nw ++;
+	  nw += disas_g(inst,&pctemp);
+	  break;
+       case OPS_G0_FA6:
+	  nw += disas_g(inst,&pctemp);
+	  put(',');
+	  nw ++;
+	  nw += disas_fr((inst>>6)&3);
+	  break;
+       default:
+	  bugchk("bad ops_format %d",(int)instr_defs[dtx].ops_format);
+	  break;
+     }
+    put(' ');
+    nw ++;
+    for (;nw<24;nw++) put(' ');
+    for (;nw%8;nw++) put(' ');
+    for (a=addr;a!=pctemp;a=(a+2)&0xffff)
+     { put((a==addr)?'[':' ');
+       put_6(fetchword(a,MMAN_ISPACE));
+     }
+    put(']');
+  }
+ return((pctemp-addr)&0xffff);
+}

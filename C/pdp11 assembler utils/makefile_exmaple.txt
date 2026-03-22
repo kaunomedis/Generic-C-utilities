@@ -1,0 +1,48 @@
+ASM = "C:\Program Files (x86)\PDP_macro11\macro11.exe"
+O2B = "C:\Program Files (x86)\PDP_macro11\obj2bin.exe"
+#O2B= perl "C:\Program Files (x86)\PDP_macro11\obj2bin.pl"
+DSS = "TOOLS\disas11.exe"
+COR = "TOOLS\bin2core.exe"
+CLN = "TOOLS\pdp11guilistingcleaner.exe"
+OHX = "TOOLS\octal2hex.exe"
+L2B = "TOOLS\lst2bin.exe"
+
+PROJECT = $(notdir $(CURDIR))
+SRC = $(wildcard *.mac)
+BDIR = build
+#OBJ = $(patsubst %.mac, $(BDIR)/%.o, $(SRC))
+OBJ = $(patsubst %.mac,%.o, $(SRC))
+LST = $(patsubst %.mac,%.lst, $(SRC))
+BIN = $(patsubst %.mac,%.bin, $(SRC))
+NAME= $(patsubst %.mac,%, $(SRC))
+DIS = $(patsubst %.mac,%.dis, $(SRC))
+HEX = $(patsubst %.mac,%.hex, $(SRC))
+CORE = $(patsubst %.mac,%.core, $(SRC))
+DISI = $(patsubst %.mac,%.disi, $(SRC))
+DIS = $(patsubst %.mac,%.dis, $(SRC))
+
+.PHONY: clean all
+
+clean:
+		rm -f *.o *.lst *.obj *.hex *.disi *.dis *.core *.bin
+all:	 $(BIN) $(HEX)
+
+%.o:	%.mac makefile
+		@echo "Visi skaiciai faile $< yra oktaliniai"
+		$(ASM) -o $@ -l $*.lst $<
+%.bin:	%.o
+	$(O2B) $< $@
+	@echo "DONE BIN: $@"
+	
+%.core: %.bin
+		$(COR) $< $*.core
+		
+%.disi:	%.core
+		$(DSS) $< > $*.disi
+		
+%.dis:	%.disi
+		$(CLN) $< $*.dis
+.PRECIOUS: %.lst
+
+%.hex:	%.dis
+		$(OHX)  $< $*.hex
